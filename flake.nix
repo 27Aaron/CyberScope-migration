@@ -1,0 +1,102 @@
+{
+  description = "Nix development environment for CyberScope";
+
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+  outputs = {
+    self,
+    nixpkgs,
+    ...
+  }: let
+    systems = [
+      "aarch64-darwin"
+      "aarch64-linux"
+      "x86_64-linux"
+    ];
+    forAllSystems = function: nixpkgs.lib.genAttrs systems (system: function nixpkgs.legacyPackages.${system});
+  in {
+    packages = forAllSystems (pkgs: {
+      frontend = pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
+        pname = "cyberscope-console-frontend";
+        version = "0.1.0";
+        src = pkgs.lib.cleanSourceWith {
+          src = ./frontend;
+          filter = path: type: let
+            name = pkgs.lib.baseNameOf (toString path);
+          in
+            name != "dist" && name != "node_modules";
+        };
+
+        nativeBuildInputs = [
+          pkgs.nodejs_22
+          pkgs.pnpm_11
+          pkgs.pnpmConfigHook
+        ];
+
+        pnpmDeps = pkgs.fetchPnpmDeps {
+          inherit (finalAttrs) pname version src;
+          pnpm = pkgs.pnpm_11;
+          fetcherVersion = 4;
+          hash = "sha256-0nGNKTtNbTFRQsc2WQDeAvx2Sop7d4dppHKTFC2yLwA=";
+        };
+
+        buildPhase = ''
+          runHook preBuild
+          pnpm build
+          runHook postBuild
+        '';
+
+        installPhase = ''
+          mkdir -p $out
+          cp -R dist $out/
+        '';
+      });
+
+      default = pkgs.rustPlatform.buildRustPackage {
+        pname = "cyberscope";
+        version = "0.1.0";
+        src = ./.;
+        cargoRoot = "backend";
+        cargoLock.lockFile = ./backend/Cargo.lock;
+
+        preBuild = ''
+          mkdir -p frontend/dist
+          cp -R ${self.packages.${pkgs.system}.frontend}/dist/. frontend/dist/
+          cd backend
+        '';
+
+        meta = {
+          description = "Multi-source internet asset intelligence console with an embedded web frontend";
+          mainProgram = "cyberscope";
+        };
+      };
+    });
+
+    apps = forAllSystems (pkgs: {
+      default = {
+        type = "app";
+        program = "${self.packages.${pkgs.system}.default}/bin/cyberscope";
+      };
+    });
+
+    devShells = forAllSystems (pkgs: {
+      default = pkgs.mkShell {
+        packages = with pkgs; [
+          cargo
+          cargo-nextest
+          clippy
+          nodejs_22
+          pnpm_11
+          pkg-config
+          rust-analyzer
+          rustc
+          rustfmt
+        ];
+
+        RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+      };
+    });
+
+    formatter = forAllSystems (pkgs: pkgs.nixfmt-tree);
+  };
+}
