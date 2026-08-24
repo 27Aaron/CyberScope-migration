@@ -1,10 +1,32 @@
+# Environment and secrets
 .env
 .env.*
 !.env.example
-target/
+
+# Rust build output
+/target/
+**/target/
+
+# Frontend dependencies and build output
 frontend/node_modules/
 frontend/dist/
+frontend/.vite/
 .pnpm-store/
+coverage/
+*.tsbuildinfo
+
+# Runtime data and SQLite sidecar files
 data/
-.DS_Store
+*.db-shm
+*.db-wal
+
+# Nix and local development artifacts
 .direnv/
+result
+result-*
+
+# IDE and operating-system files
+.DS_Store
+.idea/
+.vscode/
+*.swp
