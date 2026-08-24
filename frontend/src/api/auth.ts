@@ -37,6 +37,7 @@ export async function login(input: {
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify(input),
   });
+  if (response.status === 401) throw new Error("账号或密码错误");
   if (!response.ok) throw await parseError(response);
   return response.json() as Promise<Session>;
 }

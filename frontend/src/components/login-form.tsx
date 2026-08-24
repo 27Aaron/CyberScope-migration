@@ -1,101 +1,143 @@
 import { type FormEvent, useState } from "react";
-import { CircleAlert, LogIn } from "lucide-react";
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
 import {
   Field,
-  FieldDescription,
+  FieldError,
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import { cn } from "@/lib/utils";
 
-type LoginFormProps = {
+type LoginFormProps = Omit<React.ComponentProps<"div">, "onSubmit"> & {
   error?: string;
   isPending: boolean;
+  onInputChange?: () => void;
   onSubmit: (credentials: { username: string; password: string }) => void;
 };
 
-export function LoginForm({ error, isPending, onSubmit }: LoginFormProps) {
-  const [username, setUsername] = useState("admin");
+type LoginFieldErrors = {
+  username?: string;
+  password?: string;
+};
+
+export function LoginForm({
+  className,
+  error,
+  isPending,
+  onInputChange,
+  onSubmit,
+  ...props
+}: LoginFormProps) {
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<LoginFieldErrors>({});
+  const passwordError = fieldErrors.password ?? error;
+
+  function clearFieldError(field: keyof LoginFieldErrors) {
+    setFieldErrors((current) =>
+      current[field] ? { ...current, [field]: undefined } : current,
+    );
+    onInputChange?.();
+  }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    onSubmit({ username: username.trim(), password });
+    const normalizedUsername = username.trim();
+    const nextErrors: LoginFieldErrors = {};
+
+    if (!normalizedUsername) {
+      nextErrors.username = "请输入用户名。";
+    }
+    if (!password) {
+      nextErrors.password = "请输入密码。";
+    } else if (Array.from(password).length < 8) {
+      nextErrors.password = "密码至少需要 8 个字符。";
+    }
+
+    setFieldErrors(nextErrors);
+    if (nextErrors.username || nextErrors.password) return;
+
+    onSubmit({ username: normalizedUsername, password });
   }
 
   return (
-    <Card>
-      <form className="contents" onSubmit={handleSubmit}>
+    <div className={cn("flex flex-col gap-6", className)} {...props}>
+      <Card>
         <CardHeader>
           <CardTitle>登录控制台</CardTitle>
-          <CardDescription>
-            使用部署时配置的管理员凭据访问资产检索工作台。
-          </CardDescription>
         </CardHeader>
         <CardContent>
-          <FieldGroup>
-            {error ? (
-              <Alert variant="destructive">
-                <CircleAlert />
-                <AlertTitle>无法登录</AlertTitle>
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            ) : null}
-            <Field data-invalid={Boolean(error)}>
-              <FieldLabel htmlFor="username">用户名</FieldLabel>
-              <Input
-                id="username"
-                name="username"
-                autoComplete="username"
-                aria-invalid={Boolean(error)}
-                disabled={isPending}
-                required
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
-              />
-            </Field>
-            <Field data-invalid={Boolean(error)}>
-              <FieldLabel htmlFor="password">密码</FieldLabel>
-              <Input
-                id="password"
-                name="password"
-                type="password"
-                autoComplete="current-password"
-                aria-invalid={Boolean(error)}
-                disabled={isPending}
-                required
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-              />
-            </Field>
-          </FieldGroup>
+          <form noValidate onSubmit={handleSubmit}>
+            <FieldGroup>
+              <Field
+                data-disabled={isPending}
+                data-invalid={Boolean(fieldErrors.username)}
+              >
+                <FieldLabel htmlFor="username">用户名</FieldLabel>
+                <Input
+                  id="username"
+                  name="username"
+                  autoComplete="username"
+                  aria-describedby={
+                    fieldErrors.username ? "username-error" : undefined
+                  }
+                  aria-invalid={Boolean(fieldErrors.username)}
+                  disabled={isPending}
+                  required
+                  value={username}
+                  onChange={(event) => {
+                    setUsername(event.target.value);
+                    clearFieldError("username");
+                  }}
+                />
+                <FieldError id="username-error">
+                  {fieldErrors.username}
+                </FieldError>
+              </Field>
+              <Field
+                data-disabled={isPending}
+                data-invalid={Boolean(passwordError)}
+              >
+                <FieldLabel htmlFor="password">密码</FieldLabel>
+                <Input
+                  id="password"
+                  name="password"
+                  type="password"
+                  autoComplete="current-password"
+                  aria-describedby={
+                    passwordError ? "password-error" : undefined
+                  }
+                  aria-invalid={Boolean(passwordError)}
+                  disabled={isPending}
+                  minLength={8}
+                  required
+                  value={password}
+                  onChange={(event) => {
+                    setPassword(event.target.value);
+                    clearFieldError("password");
+                  }}
+                />
+                <FieldError id="password-error">{passwordError}</FieldError>
+              </Field>
+              <Field>
+                <Button disabled={isPending} type="submit">
+                  {isPending ? <Spinner data-icon="inline-start" /> : null}
+                  {isPending ? "正在验证" : "登录"}
+                </Button>
+              </Field>
+            </FieldGroup>
+          </form>
         </CardContent>
-        <CardFooter className="flex-col gap-3">
-          <Button className="w-full" disabled={isPending} type="submit">
-            {isPending ? (
-              <Spinner data-icon="inline-start" />
-            ) : (
-              <LogIn data-icon="inline-start" />
-            )}
-            {isPending ? "正在验证" : "登录"}
-          </Button>
-          <FieldDescription>
-            登录状态保存在仅限当前站点访问的 HttpOnly 会话 Cookie 中。
-          </FieldDescription>
-        </CardFooter>
-      </form>
-    </Card>
+      </Card>
+    </div>
   );
 }

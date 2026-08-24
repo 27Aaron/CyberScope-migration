@@ -11,7 +11,6 @@ import {
   LogOut,
   Play,
   RefreshCw,
-  ShieldCheck,
   SlidersHorizontal,
   X,
 } from "lucide-react";
@@ -261,20 +260,23 @@ function TaskSummary({
 function LoginScreen({
   error,
   isPending,
+  onInputChange,
   onLogin,
 }: {
   error?: string;
   isPending: boolean;
+  onInputChange: () => void;
   onLogin: (credentials: { username: string; password: string }) => void;
 }) {
   return (
-    <main className="flex min-h-svh items-center justify-center bg-muted p-6 md:p-10">
-      <div className="flex w-full max-w-sm flex-col gap-6">
-        <Badge className="self-center" variant="secondary">
-          <ShieldCheck />
-          CyberScope
-        </Badge>
-        <LoginForm error={error} isPending={isPending} onSubmit={onLogin} />
+    <main className="flex min-h-svh w-full items-center justify-center p-6 md:p-10">
+      <div className="w-full max-w-sm">
+        <LoginForm
+          error={error}
+          isPending={isPending}
+          onInputChange={onInputChange}
+          onSubmit={onLogin}
+        />
       </div>
     </main>
   );
@@ -282,20 +284,22 @@ function LoginScreen({
 
 function SessionLoading() {
   return (
-    <main className="flex min-h-svh items-center justify-center bg-muted p-6">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <Skeleton className="h-5 w-36" />
-          <Skeleton className="h-4 w-full" />
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          <Skeleton className="h-9 w-full" />
-          <Skeleton className="h-9 w-full" />
-        </CardContent>
-        <CardFooter>
-          <Skeleton className="h-9 w-full" />
-        </CardFooter>
-      </Card>
+    <main className="flex min-h-svh w-full items-center justify-center p-6 md:p-10">
+      <div className="w-full max-w-sm">
+        <Card>
+          <CardHeader>
+            <Skeleton className="h-5 w-36" />
+            <Skeleton className="h-4 w-full" />
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <Skeleton className="h-9 w-full" />
+            <Skeleton className="h-9 w-full" />
+          </CardContent>
+          <CardFooter>
+            <Skeleton className="h-9 w-full" />
+          </CardFooter>
+        </Card>
+      </div>
     </main>
   );
 }
@@ -837,6 +841,7 @@ function App() {
       <LoginScreen
         error={error instanceof Error ? error.message : undefined}
         isPending={loginMutation.isPending}
+        onInputChange={() => loginMutation.reset()}
         onLogin={(credentials) => {
           loginMutation.reset();
           loginMutation.mutate(credentials);

@@ -34,7 +34,7 @@ describe("auth api", () => {
     );
   });
 
-  it("展示后端标准登录错误", async () => {
+  it("将未授权登录统一显示为账号或密码错误", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
@@ -52,7 +52,7 @@ describe("auth api", () => {
 
     await expect(
       login({ username: "admin", password: "wrong" }),
-    ).rejects.toThrow("用户名或密码错误");
+    ).rejects.toThrow("账号或密码错误");
   });
 
   it("退出使用 POST 且接受 204", async () => {
