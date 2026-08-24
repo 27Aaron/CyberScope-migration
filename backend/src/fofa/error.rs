@@ -2,10 +2,9 @@ use std::time::Duration;
 
 use thiserror::Error;
 
-/// Errors produced by the FOFA transport, validator, and relay quota client.
+/// Errors from FOFA transport, validation, and relay quota operations.
 ///
-/// Upstream response bodies and request URLs are deliberately not retained: both can
-/// contain credentials, encoded queries, or asset data.
+/// Response bodies and request URLs are excluded to avoid retaining sensitive data.
 #[derive(Debug, Error)]
 pub enum FofaError {
     #[error("查询无效：{reason}")]
@@ -55,7 +54,7 @@ impl FofaError {
         }
     }
 
-    /// Whether the failed request might already have consumed upstream quota.
+    /// Whether the failed request may have consumed upstream quota.
     pub fn possible_duplicate_charge(&self) -> bool {
         matches!(
             self,

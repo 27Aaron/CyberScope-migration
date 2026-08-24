@@ -106,20 +106,46 @@ impl SearchStore {
         let database_file = database_path.join("cyberscope.db");
         let options = SqliteConnectOptions::new()
             .filename(database_file)
-            .create_if_missing(true);
+            .create_if_missing(true)
+            // Apply foreign-key enforcement to every pooled connection.
+            .foreign_keys(true);
         let pool = SqlitePoolOptions::new()
             .max_connections(5)
             .connect_with(options)
             .await?;
-        sqlx::query("PRAGMA foreign_keys = ON")
-            .execute(&pool)
-            .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
-        Ok(Self { pool })
+        let store = Self { pool };
+        store.fail_stale_records().await?;
+        Ok(store)
     }
 
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
+    }
+
+    /// Mark in-flight searches as failed after a process restart.
+    ///
+    /// This prevents interrupted jobs from remaining permanently active.
+    async fn fail_stale_records(&self) -> Result<(), sqlx::Error> {
+        let now = Utc::now().to_rfc3339();
+        let result = sqlx::query(
+            "UPDATE searches SET status = 'failed', \
+             error_code = 'stale_run', error_message = '进程重启，任务未能完成', \
+             completed_at = ?, updated_at = ? \
+             WHERE status IN ('queued', 'running', 'cancelling')",
+        )
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.pool)
+        .await?;
+        if result.rows_affected() > 0 {
+            tracing::warn!(
+                count = result.rows_affected(),
+                event = "stale_searches_failed",
+                "启动时将残留的 queued/running 任务标记为失败"
+            );
+        }
+        Ok(())
     }
 
     pub async fn insert(&self, record: &SearchRecord) -> Result<(), sqlx::Error> {

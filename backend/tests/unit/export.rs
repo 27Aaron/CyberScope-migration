@@ -84,7 +84,7 @@ fn txt_preserves_multiline_cells_and_global_record_numbers() {
 #[test]
 fn exact_limit_stays_in_one_part_and_next_byte_rolls() {
     let root = tempdir().unwrap();
-    // "v\n" header is 2 bytes and each "x\n" record is 2 bytes.
+    // Header and each row are two bytes.
     let options = ExportOptions {
         csv_bom: false,
         max_part_bytes: 6,
@@ -171,8 +171,7 @@ fn failed_batch_rolls_back_rows_and_all_new_parts() {
     let original_path = exporter.paths()[0].clone();
     let before = read(&original_path);
 
-    // First batch row fills the original part, the second creates a new
-    // part, then the injected error verifies rollback across that boundary.
+    // Force a part rollover before injecting a write failure.
     exporter.inject_failure_after_records(2);
     let error = exporter
         .write_batch(&[record(&["b"]), record(&["c"]), record(&["d"])])
@@ -242,7 +241,7 @@ fn dropping_exporter_removes_every_part() {
 }
 
 #[test]
-fn json_cells_and_local_source_cells_are_explicit() {
+fn json_cells_and_local_cells_are_explicit() {
     let mut record = ExportRecord::from_json_values(&[
         Value::Null,
         Value::String("原样".into()),
@@ -251,6 +250,30 @@ fn json_cells_and_local_source_cells_are_explicit() {
     ]);
     record.push_local_cell("source");
     assert_eq!(record.cells, ["", "原样", "443", "true", "source"]);
+}
+
+#[test]
+fn csv_injection_cells_are_neutralized_with_a_tab_prefix() {
+    // Formula-like values receive a neutral tab prefix.
+    for hostile in ["=cmd", "+1", "-2", "@x", "\n=1", "\r=2"] {
+        let sanitized = sanitize_cell(hostile);
+        assert!(sanitized.starts_with('\t'), "未消毒: {hostile:?}");
+        assert_ne!(sanitized.as_str(), hostile);
+    }
+    // Existing prefixes are preserved.
+    assert_eq!(sanitize_cell("\t=1"), "\t=1");
+    // Ordinary values are unchanged.
+    for benign in ["1.2.3.4", "host", "管理后台", "", "a=b", "443"] {
+        assert_eq!(sanitize_cell(benign), benign);
+    }
+}
+
+#[test]
+fn json_string_cells_pass_through_csv_injection_sanitization() {
+    let record = ExportRecord::from_json_values(&[Value::String("=SUM(A1)".into())]);
+    assert_eq!(record.cells, ["\t=SUM(A1)"]);
+    let nested = ExportRecord::from_json_values(&[serde_json::json!([1, "ok"])]);
+    assert_eq!(nested.cells, ["[1,\"ok\"]"]);
 }
 
 #[test]
@@ -273,6 +296,60 @@ fn json_batch_streams_conversion_and_appends_one_local_cell() {
         read(&exporter.paths()[0]),
         b"ip,port,source_query\n192.0.2.1,443,\"port=\"\"443\"\"\"\n"
     );
+}
+
+#[test]
+fn write_json_batch_neutralizes_formula_cells() {
+    let root = tempdir().unwrap();
+    let mut exporter =
+        Exporter::new(root.path(), vec!["title".into()], ExportOptions::csv(false)).unwrap();
+    exporter
+        .write_json_batch(
+            &[vec![Value::String("=HYPERLINK(\"http://evil\")".into())]],
+            None,
+        )
+        .unwrap();
+
+    let bytes = read(&exporter.paths()[0]);
+    // The CSV writer quotes the formula; the tab neutralizes it.
+    assert_eq!(bytes, b"title\n\"\t=HYPERLINK(\"\"http://evil\"\")\"\n");
+}
+
+#[test]
+fn write_batch_neutralizes_raw_cells() {
+    let root = tempdir().unwrap();
+    let mut exporter =
+        Exporter::new(root.path(), vec!["title".into()], ExportOptions::csv(false)).unwrap();
+    exporter
+        .write_batch(&[record(&["=HYPERLINK(\"http://evil\")"])])
+        .unwrap();
+
+    assert_eq!(
+        read(&exporter.paths()[0]),
+        b"title\n\"\t=HYPERLINK(\"\"http://evil\"\")\"\n"
+    );
+}
+
+#[test]
+fn hostile_local_cells_are_also_neutralized() {
+    // Local columns are user-controlled and require the same protection.
+    let root = tempdir().unwrap();
+    let mut exporter = Exporter::new(
+        root.path(),
+        vec!["ip".into(), "source_query".into()],
+        ExportOptions::csv(false),
+    )
+    .unwrap();
+    exporter
+        .write_json_batch(
+            &[vec![Value::String("192.0.2.1".into())]],
+            Some("=cmd|' /C calc'!A0"),
+        )
+        .unwrap();
+
+    let bytes = read(&exporter.paths()[0]);
+    // A tab prefix is not quoted; verify it precedes the formula marker.
+    assert_eq!(bytes, b"ip,source_query\n192.0.2.1,\t=cmd|' /C calc'!A0\n");
 }
 
 #[test]

@@ -11,6 +11,9 @@ pub const DEFAULT_REQUEST_SIZE: u32 = 10_000;
 pub const LARGE_FIELD_REQUEST_SIZE: u32 = 2_000;
 pub const OFFICIAL_BODY_REQUEST_SIZE: u32 = 500;
 
+/// Maximum query size in bytes.
+pub const MAX_QUERY_CHARS: usize = 16 * 1024;
+
 /// Fields documented by FOFA for `/api/v1/search/all`.
 pub const OFFICIAL_RETURN_FIELD_NAMES: &[&str] = &[
     "ip",
@@ -149,10 +152,7 @@ pub enum ValidationWarning {
     AmbiguousBooleanPrecedence,
 }
 
-/// A query and field list accepted for the selected endpoint capabilities.
-///
-/// This type intentionally has no `Debug` implementation because it owns the raw
-/// FOFA query.
+/// A validated query and field list for the selected endpoint.
 pub struct ValidatedSearch {
     query: String,
     fields: Vec<ReturnField>,
@@ -177,8 +177,7 @@ impl ValidatedSearch {
         &self.warnings
     }
 
-    /// Limit a batch to both the upstream field limit and a job's remaining row
-    /// target. `None` requests the maximum upstream batch.
+    /// Cap the request by both the upstream limit and remaining rows.
     pub fn request_size(&self, remaining_rows: Option<u64>) -> u32 {
         remaining_rows
             .map(|remaining| remaining.min(u64::from(self.max_request_size)) as u32)
@@ -224,6 +223,10 @@ impl QueryValidator {
         let query = query.into();
         if query.trim().is_empty() {
             return Err(FofaError::invalid("查询语句不能为空"));
+        }
+        // Enforce the same cap used by batch query composition.
+        if query.len() > MAX_QUERY_CHARS {
+            return Err(FofaError::invalid("查询语句过长，最大 16384 字节"));
         }
         validate_return_field_shape(&fields)?;
 

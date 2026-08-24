@@ -10,10 +10,9 @@ use super::{error::FofaError, models::UserInfoEnvelope};
 
 pub const MAX_AUTH_RESPONSE_BYTES: u64 = 1024 * 1024;
 
-/// In-memory authentication for an optional FOFA-compatible relay quota API.
+/// In-memory authentication for the optional relay quota API.
 ///
-/// Neither the API key nor the temporary token is persisted or exposed through
-/// `Debug`. Concurrent refreshes are coalesced by `refresh_lock`.
+/// Credentials are neither persisted nor exposed by `Debug`; refreshes are coalesced.
 pub struct RelayQuotaAuthManager {
     http: reqwest::Client,
     base_url: Url,
@@ -40,8 +39,7 @@ impl RelayQuotaAuthManager {
         })
     }
 
-    /// Get current quota data. A 401 clears/refreshes the token and retries
-    /// `/userinfo` exactly once.
+    /// Fetch quota data, refreshing the token once after a 401.
     pub async fn userinfo(
         &self,
         cancellation: &CancellationToken,
@@ -104,8 +102,7 @@ impl RelayQuotaAuthManager {
             guard = self.refresh_lock.lock() => guard,
         };
 
-        // Another caller may already have replaced the rejected token while this
-        // task waited for the refresh lock.
+        // Another caller may have refreshed the token while we waited for the lock.
         if let Some(current) = self.token.read().await.clone()
             && current.expose_secret() != rejected.expose_secret()
         {

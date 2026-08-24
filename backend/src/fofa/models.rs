@@ -7,8 +7,7 @@ use super::error::FofaError;
 
 pub type NormalizedRow = Vec<Value>;
 
-/// A requested result column. `output_name` is used in exported files, while
-/// `api_name` is sent to FOFA.
+/// A result column with separate display and API names.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ReturnField {
     pub output_name: String,
@@ -23,8 +22,7 @@ impl ReturnField {
         }
     }
 
-    /// Create a field from a UI/API name, applying the documented `location.*`
-    /// aliases while preserving the caller's output header.
+    /// Create a field, mapping `location.*` aliases for the API.
     pub fn from_name(name: impl Into<String>) -> Self {
         let output_name = name.into();
         let api_name = map_location_field(&output_name).to_owned();
@@ -64,10 +62,9 @@ pub fn map_location_field(name: &str) -> &str {
     }
 }
 
-/// A validated search request shared by `/search/all` and `/search/next`.
+/// Validated request shared by `/search/all` and `/search/next`.
 ///
-/// This type intentionally has no `Debug` implementation because the raw query is
-/// sensitive operational data.
+/// `Debug` redacts the raw query.
 #[derive(Clone)]
 pub struct SearchQuery {
     pub query: String,
@@ -112,10 +109,9 @@ impl SearchQuery {
     }
 }
 
-/// A normalized FOFA batch. Rows always follow the requested field order.
+/// Normalized FOFA response with rows in requested field order.
 ///
-/// This type intentionally has no `Debug` implementation because it contains
-/// queries and returned asset data.
+/// `Debug` redacts queries and asset data.
 pub struct SearchResponse {
     pub query: Option<String>,
     pub mode: Option<String>,
@@ -151,12 +147,11 @@ impl SearchResponse {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RetryStats {
-    /// Number of HTTP attempts, including the successful/final attempt.
+    /// Total HTTP attempts, including the final attempt.
     pub attempts: u32,
-    /// Number of attempts made after the initial request.
+    /// Attempts after the initial request.
     pub retries: u32,
-    /// A 502/503 retry can duplicate an upstream quota charge even if this batch
-    /// eventually succeeds.
+    /// Whether a retry may have duplicated an upstream quota charge.
     pub possible_duplicate_charge: bool,
 }
 
@@ -290,7 +285,7 @@ fn is_scalar(value: &Value) -> bool {
     )
 }
 
-/// A relay time field may be a display string or Unix seconds.
+/// Relay time represented as display text or Unix seconds.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(untagged)]
 pub enum FlexibleTime {
@@ -298,7 +293,7 @@ pub enum FlexibleTime {
     Unix(i64),
 }
 
-/// Preserves the important difference between an absent field and JSON `null`.
+/// Distinguishes an absent field from JSON `null`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum FieldState<T> {
     #[default]
@@ -373,8 +368,7 @@ pub struct QuotaInfo {
 }
 
 impl QuotaInfo {
-    /// Field-state names missing from the response. The UI can render these as
-    /// “未知” and mark the optional quota module protocol-incompatible.
+    /// Return required fields missing from the response.
     pub fn missing_fields(&self) -> Vec<&'static str> {
         let mut missing = Vec::new();
         if self.status.is_missing() {

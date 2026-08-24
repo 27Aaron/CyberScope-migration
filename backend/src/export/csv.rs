@@ -14,9 +14,7 @@ pub(crate) fn preamble(fields: &[String], with_bom: bool) -> Result<Vec<u8>, Exp
 }
 
 pub(crate) fn encode_record(cells: &[String]) -> Result<Vec<u8>, ExportError> {
-    // Encoding into a Vec first lets the exporter make the rolling decision at a
-    // record boundary. Vec writes are infallible in practice, but keeping the
-    // error conversions here avoids relying on that implementation detail.
+    // Encode into memory so the exporter can roll only at record boundaries.
     let mut writer = WriterBuilder::new()
         .has_headers(false)
         .from_writer(Vec::new());

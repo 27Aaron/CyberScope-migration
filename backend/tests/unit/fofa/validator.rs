@@ -149,6 +149,25 @@ fn relay_rejects_unsupported_conflicting_and_time_range_fields() {
 }
 
 #[test]
+fn oversized_queries_are_rejected_before_scanning() {
+    let validator = QueryValidator::new(ApiMode::Relay);
+    // Reject oversized web queries before parsing.
+    let oversized = format!("ip=\"{}\"", "a".repeat(MAX_QUERY_CHARS));
+    let error = validator
+        .validate(oversized, fields(&["ip"]))
+        .err()
+        .expect("超长查询应被拒绝");
+    assert!(error.to_string().contains("查询语句过长"));
+
+    // Verify both sides of the byte boundary.
+    let at_limit = format!("ip=\"{}\"", "a".repeat(MAX_QUERY_CHARS - 5));
+    assert!(validator.validate(at_limit, fields(&["ip"])).is_ok());
+
+    let over_limit = format!("ip=\"{}\"", "a".repeat(MAX_QUERY_CHARS - 4));
+    assert!(validator.validate(over_limit, fields(&["ip"])).is_err());
+}
+
+#[test]
 fn official_mode_does_not_apply_relay_capabilities() {
     let validated = QueryValidator::new(ApiMode::Official)
         .validate(r#"sdk_hash="x""#, fields(&["body"]))
