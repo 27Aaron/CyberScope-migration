@@ -41,3 +41,7 @@ nix run
 - [架构说明](docs/web-single-binary-architecture.md)
 
 当前版本仅接入 FOFA，同时最多运行一个查询任务。请仅查询你拥有或已获授权测试的资产。
+
+## 许可证
+
+本项目采用 [MIT License](LICENSE)。
