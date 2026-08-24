@@ -39,7 +39,28 @@ export type SearchResults = {
   per_page: number;
 };
 
-type ApiEnvelope = { data?: unknown; message?: string; error?: string; detail?: string };
+type ApiErrorBody = { code?: string; message?: string };
+type ApiEnvelope = {
+  data?: unknown;
+  message?: string;
+  error?: string | ApiErrorBody;
+  detail?: string;
+};
+
+/** Parse the backend error envelope with compatibility fallbacks. */
+export function extractErrorMessage(
+  payload: (ApiEnvelope & { status?: number }) | null | undefined,
+  status?: number,
+): string {
+  const nested = typeof payload?.error === "object" ? payload.error : undefined;
+  return (
+    nested?.message ??
+    (typeof payload?.error === "string" ? payload.error : undefined) ??
+    payload?.message ??
+    payload?.detail ??
+    `请求失败（${status ?? payload?.status ?? 0}）`
+  );
+}
 
 const DEFAULT_FIELDS = ["host", "ip", "port", "country_name", "org", "lastupdatetime"];
 
@@ -47,8 +68,7 @@ async function request<T>(input: RequestInfo | URL, init?: RequestInit): Promise
   const response = await fetch(input, { headers: { "Content-Type": "application/json", ...init?.headers }, ...init });
   const payload = (await response.json().catch(() => null)) as ApiEnvelope | null;
   if (!response.ok) {
-    const message = payload?.message ?? payload?.error ?? payload?.detail ?? `请求失败（${response.status}）`;
-    throw new Error(message);
+    throw new Error(extractErrorMessage(payload, response.status));
   }
   return payload as T;
 }
@@ -138,7 +158,7 @@ export async function exportSearch(id: string, format: "csv" | "json" | "txt"): 
   const response = await fetch(`/api/v1/searches/${encodeURIComponent(id)}/export?format=${format}`);
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as ApiEnvelope | null;
-    throw new Error(payload?.message ?? payload?.error ?? `导出失败（${response.status}）`);
+    throw new Error(extractErrorMessage(payload, response.status));
   }
   return response.blob();
 }
