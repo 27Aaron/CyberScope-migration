@@ -1,10 +1,29 @@
 <!doctype html>
-<html class="dark" lang="zh-CN">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#090b10" />
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: light)"
+      content="#ffffff"
+    />
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: dark)"
+      content="#171717"
+    />
     <meta name="description" content="Multi-source Internet Asset Intelligence" />
+    <script>
+      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
+      const applySystemTheme = ({ matches: isDark }) => {
+        document.documentElement.classList.toggle("dark", isDark);
+        document.documentElement.classList.toggle("light", !isDark);
+        document.documentElement.style.colorScheme = isDark ? "dark" : "light";
+      };
+      applySystemTheme(systemTheme);
+      systemTheme.addEventListener("change", applySystemTheme);
+    </script>
     <title>CyberScope</title>
   </head>
   <body>
