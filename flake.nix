@@ -23,8 +23,9 @@
           src = ./frontend;
           filter = path: type: let
             name = pkgs.lib.baseNameOf (toString path);
+            isSecretEnv = name == ".env" || (pkgs.lib.hasPrefix ".env." name && name != ".env.example");
           in
-            name != "dist" && name != "node_modules";
+            !isSecretEnv && name != "dist" && name != "node_modules";
         };
 
         nativeBuildInputs = [
@@ -55,7 +56,20 @@
       default = pkgs.rustPlatform.buildRustPackage {
         pname = "cyberscope";
         version = "0.1.0";
-        src = ./.;
+        # Exclude runtime state, build output, and local secrets from the source.
+        src = pkgs.lib.cleanSourceWith {
+          src = ./.;
+          filter = path: type: let
+            name = pkgs.lib.baseNameOf (toString path);
+            isSecretEnv = name == ".env" || (pkgs.lib.hasPrefix ".env." name && name != ".env.example");
+          in
+            !isSecretEnv
+            && name != "data"
+            && name != "target"
+            && name != "node_modules"
+            && name != "dist"
+            && name != ".pnpm-store";
+        };
         cargoRoot = "backend";
         cargoLock.lockFile = ./backend/Cargo.lock;
 
