@@ -10,6 +10,8 @@ pub const MAX_CONCURRENT_JOBS: usize = 1;
 pub const MAX_BATCHES_PER_JOB: usize = 1_000;
 pub const DEFAULT_WEB_BIND_ADDRESS: &str = "127.0.0.1:3000";
 pub const DEFAULT_DATABASE_PATH: &str = "data";
+pub const DEFAULT_WEB_ADMIN_USERNAME: &str = "admin";
+pub const MIN_WEB_ADMIN_PASSWORD_LENGTH: usize = 8;
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -17,6 +19,8 @@ pub struct Config {
     pub fofa_api_base_url: Url,
     pub relay_quota_enabled: bool,
     pub web_bind_address: SocketAddr,
+    pub web_admin_username: String,
+    pub web_admin_password: SecretString,
     pub database_path: PathBuf,
 }
 
@@ -45,6 +49,22 @@ impl Config {
             .unwrap_or(DEFAULT_WEB_BIND_ADDRESS)
             .parse()
             .map_err(|_| ConfigError::InvalidWebBindAddress)?;
+        let web_admin_username = get("WEB_ADMIN_USERNAME")
+            .unwrap_or_else(|| DEFAULT_WEB_ADMIN_USERNAME.to_owned())
+            .trim()
+            .to_owned();
+        if web_admin_username.is_empty()
+            || web_admin_username.len() > 64
+            || web_admin_username.chars().any(char::is_control)
+        {
+            return Err(ConfigError::InvalidAdminUsername);
+        }
+        let web_admin_password = required(&get, "WEB_ADMIN_PASSWORD")?;
+        if web_admin_password.chars().count() < MIN_WEB_ADMIN_PASSWORD_LENGTH {
+            return Err(ConfigError::WeakAdminPassword(
+                MIN_WEB_ADMIN_PASSWORD_LENGTH,
+            ));
+        }
         let database_path =
             get("DATABASE_PATH").unwrap_or_else(|| DEFAULT_DATABASE_PATH.to_owned());
         if database_path.trim().is_empty() {
@@ -56,6 +76,8 @@ impl Config {
             fofa_api_base_url,
             relay_quota_enabled,
             web_bind_address,
+            web_admin_username,
+            web_admin_password: SecretString::from(web_admin_password),
             database_path: PathBuf::from(database_path),
         })
     }
@@ -107,6 +129,10 @@ pub enum ConfigError {
     RelayQuotaBaseUrl,
     #[error("WEB_BIND_ADDRESS 不是有效的监听地址")]
     InvalidWebBindAddress,
+    #[error("WEB_ADMIN_USERNAME 必须是 1 到 64 个非控制字符")]
+    InvalidAdminUsername,
+    #[error("WEB_ADMIN_PASSWORD 至少需要 {0} 个字符")]
+    WeakAdminPassword(usize),
     #[error("DATABASE_PATH 不能为空")]
     InvalidDatabasePath,
 }
