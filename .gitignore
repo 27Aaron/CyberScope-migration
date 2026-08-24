@@ -25,6 +25,9 @@ data/
 result
 result-*
 
+# Local documentation archives
+/docs/archive/
+
 # IDE and operating-system files
 .DS_Store
 .idea/
