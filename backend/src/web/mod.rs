@@ -5,8 +5,9 @@ use axum::{
     body::Body,
     extract::State,
     http::{HeaderValue, Method, StatusCode, Uri, header},
+    middleware,
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
 };
 use mime_guess::from_path;
 use rust_embed::Embed;
@@ -14,6 +15,7 @@ use serde::Serialize;
 
 use crate::state::AppState;
 
+mod auth;
 mod searches;
 
 #[derive(Embed)]
@@ -28,8 +30,7 @@ struct HealthResponse {
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
-    Router::new()
-        .route("/api/health", get(health))
+    let protected = Router::new()
         .route("/api/v1/fields", get(searches::list_fields))
         .route(
             "/api/v1/searches",
@@ -42,6 +43,17 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/searches/{id}/results", get(searches::get_results))
         .route("/api/v1/searches/{id}/export", get(searches::export_search))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_auth,
+        ));
+
+    Router::new()
+        .route("/api/health", get(health))
+        .route("/api/v1/auth/login", post(auth::login))
+        .route("/api/v1/auth/logout", post(auth::logout))
+        .route("/api/v1/me", get(auth::me))
+        .merge(protected)
         .fallback(static_or_not_found)
         .with_state(state)
 }
@@ -119,3 +131,7 @@ fn api_not_found() -> impl IntoResponse {
         })),
     )
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/web/mod.rs"]
+mod tests;

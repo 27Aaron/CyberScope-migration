@@ -9,6 +9,7 @@ use anyhow::Context;
 use tempfile::TempDir;
 
 use crate::{
+    auth::AuthManager,
     config::{Config, MAX_CONCURRENT_JOBS},
     fofa::{ApiMode, FofaClient, QueryValidator, RelayQuotaAuthManager, RetryPolicy},
     jobs::JobManager,
@@ -16,6 +17,7 @@ use crate::{
 };
 
 pub struct AppState {
+    pub auth: AuthManager,
     pub config: Arc<Config>,
     pub fofa: Arc<FofaClient>,
     pub quota: Option<Arc<RelayQuotaAuthManager>>,
@@ -63,6 +65,10 @@ impl AppState {
             .context("初始化 SQLite 数据库失败")?;
 
         Ok(Self {
+            auth: AuthManager::new(
+                config.web_admin_username.clone(),
+                config.web_admin_password.clone(),
+            ),
             config,
             fofa,
             quota,
