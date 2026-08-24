@@ -1,6 +1,7 @@
 use pretty_assertions::assert_eq;
 
 use super::*;
+use crate::fofa::validator::MAX_QUERY_CHARS;
 
 fn options(
     max_upload_bytes: usize,
@@ -139,7 +140,7 @@ fn per_line_limit_is_inclusive_uses_utf8_bytes_and_excludes_crlf() {
             max: 4,
         })
     );
-    // `界` is three UTF-8 bytes, not one byte.
+    // A CJK character occupies three UTF-8 bytes.
     assert!(parse_batch("界x".as_bytes(), BatchMode::FullQuery, &opts).is_ok());
     assert_eq!(
         parse_batch("界xx".as_bytes(), BatchMode::FullQuery, &opts),
@@ -240,6 +241,21 @@ fn cidr_query_composition_is_exact_for_empty_and_nonempty_base_queries() {
         document.items[0].query,
         r#"(title="login" || product="nginx") && ip="1.2.3.0/24""#
     );
+}
+
+#[test]
+fn cidr_mode_rejects_queries_that_would_exceed_the_validator_cap() {
+    // The CIDR line fits, but the composed query exceeds the validator cap.
+    let base_len = MAX_QUERY_CHARS - "1.2.3.0/24".len() - r#"() && ip="""#.len() + 1;
+    let base_query = "a".repeat(base_len);
+    let error = parse_batch_default(b"1.2.3.0/24", BatchMode::cidr(base_query)).unwrap_err();
+    assert!(matches!(error, BatchError::LineTooLong { .. }));
+
+    // A composed query at the cap remains valid.
+    let base_len = MAX_QUERY_CHARS - "1.2.3.0/24".len() - r#"() && ip="""#.len();
+    let base_query = "a".repeat(base_len);
+    let document = parse_batch_default(b"1.2.3.0/24", BatchMode::cidr(base_query)).unwrap();
+    assert_eq!(document.items[0].query.len(), MAX_QUERY_CHARS);
 }
 
 #[test]

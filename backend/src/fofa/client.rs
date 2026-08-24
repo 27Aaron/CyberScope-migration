@@ -15,8 +15,7 @@ use super::{
     validator::QueryValidator,
 };
 
-/// Defensive cap for one decoded search response, enforced while chunked bodies
-/// are streamed into the per-page buffer.
+/// Maximum decoded response size enforced during streaming.
 pub const MAX_SEARCH_RESPONSE_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
@@ -40,9 +39,7 @@ impl Default for RetryPolicy {
 impl RetryPolicy {
     fn delay(&self, retry_index: u32, retry_after: Option<Duration>) -> Duration {
         if let Some(retry_after) = retry_after {
-            // Honor the upstream value independently of the exponential-backoff
-            // ceiling. A safety cap prevents a malicious header from parking the
-            // sole global job forever.
+            // Honor Retry-After independently, but cap untrusted delays.
             return cmp::min(retry_after, Duration::from_secs(5 * 60));
         }
 
@@ -53,11 +50,7 @@ impl RetryPolicy {
     }
 }
 
-/// FOFA public search client.
-///
-/// The injected client should reject cross-origin redirects, so credentials can
-/// never be forwarded to another host. Request errors are converted immediately
-/// and never retain their credential-bearing URL.
+/// FOFA search client with redirect and error-sanitization safeguards.
 pub struct FofaClient {
     http: reqwest::Client,
     base_url: Url,
@@ -87,7 +80,7 @@ impl FofaClient {
         &self.base_url
     }
 
-    /// Execute one ordinary FOFA page.
+    /// Fetch the first search page.
     pub async fn search_all(
         &self,
         search: &SearchQuery,
@@ -117,8 +110,7 @@ impl FofaClient {
         .await
     }
 
-    /// Execute the first or a subsequent cursor page. The first call passes `None`;
-    /// every later call passes the last returned cursor.
+    /// Fetch a page using an optional cursor.
     pub async fn search_next(
         &self,
         search: &SearchQuery,
@@ -191,8 +183,7 @@ impl FofaClient {
                     if error.is_builder() {
                         return Err(FofaError::protocol("无法编码 FOFA 请求参数"));
                     }
-                    // Connect errors happen before a request is sent, so they are the
-                    // only transport errors retried by default.
+                    // Only pre-request connection failures are retried by default.
                     if error.is_connect() && retries < self.retry.max_retries {
                         self.wait_before_retry(retries, None, cancellation).await?;
                         retries += 1;

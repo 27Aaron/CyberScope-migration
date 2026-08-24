@@ -1,7 +1,6 @@
-//! Streaming, transactional result-file export.
+//! Transactional, streaming export to temporary part files.
 //!
-//! `Exporter` owns every part file. Keep it alive while the paths are being
-//! uploaded; dropping it removes all of them.
+//! `Exporter` owns its files; keep it alive while consumers use the paths.
 
 mod csv;
 mod text;
@@ -16,13 +15,11 @@ use serde_json::Value;
 use tempfile::{Builder, NamedTempFile};
 use thiserror::Error;
 
-/// Keep individual export parts reasonably sized for browser downloads and
-/// future delivery adapters.
+/// Maximum size of one export part.
 pub const DEFAULT_MAX_PART_BYTES: u64 = 45 * 1024 * 1024;
-/// Prevent one task from filling the disk or producing an unbounded download
-/// queue. With the default part size this caps normal output near 450 MiB.
+/// Maximum number of parts per task.
 pub const DEFAULT_MAX_PARTS: usize = 10;
-/// Backwards-friendly name for callers that think of the limit as a split size.
+/// Legacy alias for the part-size limit.
 pub const FILE_SPLIT_BYTES: u64 = DEFAULT_MAX_PART_BYTES;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,11 +40,9 @@ impl ExportFormat {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExportOptions {
     pub format: ExportFormat,
-    /// Applied to every CSV part so each part opens independently in Excel.
-    /// Ignored for TXT output.
+    /// Add a BOM to each CSV part; ignored for TXT output.
     pub csv_bom: bool,
-    /// A part rolls before a record that would make it exceed this size. A
-    /// single oversized record is kept intact and is allowed to exceed it.
+    /// Roll before a record exceeds this size; oversized records remain intact.
     pub max_part_bytes: u64,
     pub max_parts: usize,
 }
@@ -80,8 +75,7 @@ impl ExportOptions {
     }
 }
 
-/// One output row. `cells` must already include any local-only columns such as
-/// `source_query` or `source_cidr`; those values must never be sent upstream.
+/// One output row, including any local-only columns such as `source_query`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExportRecord {
     pub cells: Vec<String>,
@@ -92,10 +86,7 @@ impl ExportRecord {
         Self { cells }
     }
 
-    /// Convert a normalized FOFA row without coupling the exporter to the HTTP
-    /// model. Null is an empty cell, strings are preserved, and scalar values
-    /// use their JSON spelling. The compact fallback is defensive; the FOFA
-    /// normalizer normally rejects nested cells.
+    /// Convert normalized JSON values to export cells.
     pub fn from_json_values(values: &[Value]) -> Self {
         Self {
             cells: values.iter().map(json_value_to_cell).collect(),
@@ -119,13 +110,29 @@ impl<const N: usize> From<[&str; N]> for ExportRecord {
     }
 }
 
+/// Prefix spreadsheet formula-like values with a tab; JSON export stays raw.
+pub fn sanitize_cell(cell: &str) -> String {
+    // Preserve an existing neutral prefix.
+    if cell.starts_with('\t') {
+        return cell.to_owned();
+    }
+    if cell.starts_with(['=', '+', '-', '@', '\n', '\r']) {
+        let mut sanitized = String::with_capacity(cell.len() + 1);
+        sanitized.push('\t');
+        sanitized.push_str(cell);
+        sanitized
+    } else {
+        cell.to_owned()
+    }
+}
+
 pub fn json_value_to_cell(value: &Value) -> String {
     match value {
         Value::Null => String::new(),
-        Value::String(value) => value.clone(),
+        Value::String(value) => sanitize_cell(value),
         Value::Bool(value) => value.to_string(),
         Value::Number(value) => value.to_string(),
-        Value::Array(_) | Value::Object(_) => value.to_string(),
+        Value::Array(_) | Value::Object(_) => sanitize_cell(&value.to_string()),
     }
 }
 
@@ -250,8 +257,7 @@ impl Exporter {
         self.parts.len()
     }
 
-    /// Cloned paths are intentional: they remain usable by upload code without
-    /// borrowing the exporter, but are valid only while this exporter lives.
+    /// Return part paths valid for the lifetime of the exporter.
     pub fn paths(&self) -> Vec<PathBuf> {
         self.parts
             .iter()
@@ -274,9 +280,7 @@ impl Exporter {
             .collect()
     }
 
-    /// Atomically append a complete upstream page. On any encoding, creation,
-    /// write, or flush failure, all rows and newly-created parts from this call
-    /// are removed.
+    /// Append a page atomically, rolling back rows and new parts on failure.
     pub fn write_batch(&mut self, records: &[ExportRecord]) -> Result<(), ExportError> {
         if self.poisoned {
             return Err(ExportError::Poisoned);
@@ -297,9 +301,7 @@ impl Exporter {
         self.finish_batch(snapshot, result)
     }
 
-    /// Transactionally append normalized JSON rows while converting only one
-    /// row at a time. This avoids duplicating an entire large FOFA page in an
-    /// intermediate `Vec<ExportRecord>`.
+    /// Append normalized JSON rows without materializing an intermediate record list.
     pub fn write_json_batch(
         &mut self,
         rows: &[Vec<Value>],
@@ -318,18 +320,19 @@ impl Exporter {
         }
 
         let snapshot = self.begin_batch()?;
-        let result = self.write_json_batch_inner(rows, local_cell);
+        // Sanitize user-controlled local columns as well.
+        let local_cell = local_cell.map(sanitize_cell);
+        let result = self.write_json_batch_inner(rows, local_cell.as_deref());
         self.finish_batch(snapshot, result)
     }
 
-    /// Convenience for callers that already hold rows as vectors.
+    /// Append rows that are already represented as strings.
     pub fn write_cells_batch(&mut self, rows: &[Vec<String>]) -> Result<(), ExportError> {
         let records: Vec<_> = rows.iter().cloned().map(ExportRecord::new).collect();
         self.write_batch(&records)
     }
 
-    /// Flush every part. `write_batch` already flushes on successful commit;
-    /// this is useful immediately before handing paths to another process.
+    /// Flush all parts before handing their paths to another process.
     pub fn flush(&mut self) -> Result<(), ExportError> {
         if self.poisoned {
             return Err(ExportError::Poisoned);
@@ -344,7 +347,13 @@ impl Exporter {
         for (batch_index, record) in records.iter().enumerate() {
             self.maybe_inject_failure(batch_index)?;
 
-            self.write_record_cells(&record.cells)?;
+            // Protect callers that provide preformatted cells.
+            let cells: Vec<_> = record
+                .cells
+                .iter()
+                .map(|cell| sanitize_cell(cell))
+                .collect();
+            self.write_record_cells(&cells)?;
         }
         self.flush_current_part()?;
         Ok(())
@@ -470,8 +479,7 @@ impl Exporter {
 
     fn rollback(&mut self, snapshot: BatchSnapshot) -> io::Result<()> {
         while self.parts.len() > snapshot.part_count {
-            // Close explicitly so a failed unlink is observable rather than
-            // being swallowed by NamedTempFile's best-effort Drop cleanup.
+            // Close explicitly so unlink failures are observable.
             let part = self.parts.pop().expect("length checked above");
             part.file.close()?;
         }
@@ -512,8 +520,7 @@ impl Exporter {
 
 impl Drop for Exporter {
     fn drop(&mut self) {
-        // Being explicit documents the lifecycle guarantee. NamedTempFile's
-        // drop unlinks each part, including paths cloned by `paths()`.
+        // NamedTempFile removes every part on drop, including cloned paths.
         self.parts.clear();
     }
 }

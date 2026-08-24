@@ -1,53 +1,47 @@
-//! Parsing and normalization for `/batch` TXT uploads.
-//!
-//! The parser deliberately operates on bytes so that upload-size, encoding, and
-//! binary-file checks happen before any query text is retained in memory.
+//! Parse and normalize `/batch` TXT uploads.
 
 use std::collections::HashSet;
 
 use ipnet::IpNet;
 use thiserror::Error;
 
-/// Maximum accepted size of a batch upload (10 MiB).
+/// Maximum upload size.
 pub const MAX_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
-/// Maximum number of non-blank, non-comment lines in one upload.
+/// Maximum number of effective input lines.
 pub const MAX_BATCH_LINES: usize = 10_000;
-/// Maximum byte length of one effective input line (16 KiB).
+/// Maximum byte length of one input line.
 pub const MAX_QUERY_LINE_BYTES: usize = 16 * 1024;
 
-/// The explicitly selected interpretation of a batch file.
+/// How to interpret each effective input line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BatchMode {
-    /// Each effective line is a canonical IPv4 or IPv6 network.
+    /// Each line is a canonical IPv4 or IPv6 network.
     Cidr { base_query: String },
-    /// Each effective line is already a complete FOFA query.
+    /// Each line is a complete FOFA query.
     FullQuery,
 }
 
 impl BatchMode {
-    /// Construct CIDR mode. An empty or whitespace-only base query is allowed.
+    /// Create CIDR mode. An empty base query is allowed.
     pub fn cidr(base_query: impl Into<String>) -> Self {
         Self::Cidr {
             base_query: base_query.into(),
         }
     }
 
-    /// Construct complete-query mode.
+    /// Create complete-query mode.
     pub const fn full_query() -> Self {
         Self::FullQuery
     }
 }
 
-/// Resource limits and optional normalization behavior for a batch upload.
+/// Batch parser limits and normalization options.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BatchParseOptions {
     pub max_upload_bytes: usize,
     pub max_batch_lines: usize,
     pub max_query_line_bytes: usize,
-    /// Remove later occurrences of the same normalized input line.
-    ///
-    /// This is intentionally disabled by default. Duplicate lines still count
-    /// toward `max_batch_lines`, even when they are removed from the result.
+    /// Remove later duplicates after normalization.
     pub deduplicate: bool,
 }
 
@@ -63,14 +57,14 @@ impl Default for BatchParseOptions {
 }
 
 impl BatchParseOptions {
-    /// Return these options with duplicate removal enabled or disabled.
+    /// Toggle duplicate removal.
     pub const fn with_deduplication(mut self, deduplicate: bool) -> Self {
         self.deduplicate = deduplicate;
         self
     }
 }
 
-/// Which source column a batch result should use when it is exported.
+/// Source column appended to batch exports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BatchSourceKind {
     Cidr,
@@ -78,7 +72,7 @@ pub enum BatchSourceKind {
 }
 
 impl BatchSourceKind {
-    /// Header to append to an exported result.
+    /// Export header.
     pub const fn export_field(self) -> &'static str {
         match self {
             Self::Cidr => "source_cidr",
@@ -87,30 +81,30 @@ impl BatchSourceKind {
     }
 }
 
-/// One normalized, executable line from a batch upload.
+/// One normalized, executable batch line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BatchItem {
-    /// One-based line number in the original decoded TXT file.
+    /// One-based line number in the decoded input.
     pub line_number: usize,
-    /// Trimmed input line (a CIDR or a complete query, depending on the mode).
+    /// Trimmed input line.
     pub source: String,
-    /// Complete FOFA query to execute.
+    /// Query sent to FOFA.
     pub query: String,
 }
 
-/// Backwards-friendly synonym for callers that use "entry" terminology.
+/// Compatibility alias for callers using "entry" terminology.
 pub type BatchEntry = BatchItem;
 
-/// Successfully parsed batch contents and summary counters.
+/// Parsed batch contents and counters.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BatchDocument {
     pub source_kind: BatchSourceKind,
     pub items: Vec<BatchItem>,
-    /// Number of non-blank, non-comment input lines before deduplication.
+    /// Effective input lines before deduplication.
     pub effective_lines: usize,
-    /// Number of blank and comment lines ignored by the parser.
+    /// Ignored blank and comment lines.
     pub ignored_lines: usize,
-    /// Number of later duplicate lines removed from `items`.
+    /// Duplicates removed from `items`.
     pub deduplicated_lines: usize,
 }
 
@@ -162,11 +156,10 @@ pub enum BatchError {
     },
 }
 
-/// Parse an uploaded TXT file according to an explicitly selected mode.
+/// Parse an uploaded TXT file using the selected mode.
 ///
-/// UTF-8 BOM and CRLF are accepted. Surrounding whitespace is removed from
-/// effective lines; blank lines and lines whose first non-whitespace character
-/// is `#` are ignored. The original one-based line number is retained.
+/// Accepts UTF-8 BOM/CRLF, trims effective lines, ignores blanks and comments,
+/// and preserves original line numbers.
 pub fn parse_batch(
     bytes: &[u8],
     mode: BatchMode,
@@ -179,15 +172,13 @@ pub fn parse_batch(
         });
     }
 
-    // Check the encoding before examining Unicode controls. Invalid UTF-8 is a
-    // distinct user-facing problem and its byte offset is useful diagnostics.
+    // Validate UTF-8 first so invalid input reports its byte offset.
     let text = std::str::from_utf8(bytes).map_err(|error| BatchError::InvalidUtf8 {
         valid_up_to: error.valid_up_to(),
     })?;
     reject_binary_controls(text)?;
 
-    // A BOM is metadata only at the very beginning of a UTF-8 text file. It
-    // must not become part of the first query or its per-line byte count.
+    // Strip only a leading BOM; it is file metadata, not query data.
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let source_kind = match mode {
         BatchMode::Cidr { .. } => BatchSourceKind::Cidr,
@@ -213,9 +204,7 @@ pub fn parse_batch(
             continue;
         }
 
-        // Count bytes in the logical input line after BOM/line-ending removal,
-        // but before trimming. Whitespace is still upload data and therefore
-        // consumes the same per-line resource budget as query text.
+        // Enforce the raw line budget before trimming.
         let line_bytes = raw_line.len();
         if line_bytes > options.max_query_line_bytes {
             return Err(BatchError::LineTooLong {
@@ -243,7 +232,16 @@ pub fn parse_batch(
         let query = match base_query {
             Some(base_query) => {
                 let network = parse_canonical_cidr(source, line_number)?;
-                compose_cidr_query(base_query, &network.to_string())
+                let query = compose_cidr_query(base_query, &network.to_string());
+                // Validate the composed query before execution.
+                if query.len() > crate::fofa::validator::MAX_QUERY_CHARS {
+                    return Err(BatchError::LineTooLong {
+                        line_number,
+                        actual: query.len(),
+                        max: crate::fofa::validator::MAX_QUERY_CHARS,
+                    });
+                }
+                query
             }
             None => source.to_owned(),
         };
@@ -264,16 +262,14 @@ pub fn parse_batch(
     })
 }
 
-/// Parse with the documented default limits and with deduplication disabled.
+/// Parse with default limits and deduplication disabled.
 pub fn parse_batch_default(bytes: &[u8], mode: BatchMode) -> Result<BatchDocument, BatchError> {
     parse_batch(bytes, mode, &BatchParseOptions::default())
 }
 
-/// Compose the exact FOFA query used by CIDR mode.
+/// Compose the query used by CIDR mode.
 ///
-/// `cidr` is expected to have already passed canonical CIDR validation. This
-/// function only composes text, which also makes it useful to presentation and
-/// confirmation layers without repeating parser internals.
+/// `cidr` must already be canonical; this function only formats the query.
 pub fn compose_cidr_query(base_query: &str, cidr: &str) -> String {
     let base_query = base_query.trim();
     if base_query.is_empty() {
@@ -312,7 +308,7 @@ fn reject_binary_controls(text: &str) -> Result<(), BatchError> {
 
         let allowed = match character {
             '\n' | '\t' => true,
-            // A carriage return is text only as the first half of CRLF.
+            // Accept CR only as part of CRLF.
             '\r' => text.as_bytes().get(offset + 1) == Some(&b'\n'),
             _ => false,
         };
